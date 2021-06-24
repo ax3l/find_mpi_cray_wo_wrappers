@@ -105,7 +105,7 @@ This module performs a four step search for an MPI implementation:
 
 1. Search for ``MPIEXEC_EXECUTABLE`` and, if found, use its base directory.
 2. Check if the compiler has MPI support built-in. This is the case if the user passed a
-   compiler wrapper as ``CMAKE_<LANG>_COMPILER`` or if they're on a Cray system.
+   compiler wrapper as ``CMAKE_<LANG>_COMPILER`` or if they use Cray system compiler wrappers.
 3. Attempt to find an MPI compiler wrapper and determine the compiler information from it.
 4. Try to find an MPI implementation that does not ship such a wrapper by guessing settings.
    Currently, only Microsoft MPI and MPICH2 on Windows are supported.
@@ -333,6 +333,11 @@ set(_MPI_XL_Fortran_COMPILER_NAMES         mpixlf95   mpixlf95_r mpxlf95 mpxlf95
                                            mpixlf77   mpixlf77_r mpxlf77 mpxlf77_r
                                            mpixlf     mpixlf_r   mpxlf   mpxlf_r)
 
+# Cray Compiler names
+set(_MPI_Cray_C_COMPILER_NAMES             cc)
+set(_MPI_Cray_CXX_COMPILER_NAMES           CC)
+set(_MPI_Cray_Fortran_COMPILER_NAMES       ftn)
+
 # Prepend vendor-specific compiler wrappers to the list. If we don't know the compiler,
 # attempt all of them.
 # By attempting vendor-specific compiler names first, we should avoid situations where the compiler wrapper
@@ -484,6 +489,28 @@ function (_MPI_interrogate_compiler LANG)
 
       if (NOT MPI_COMPILER_RETURN EQUAL 0)
         unset(MPI_COMPILE_CMDLINE)
+      endif()
+    endif()
+  endif()
+
+  # Cray compiler wrappers come usually without a separate mpicc/c++/ftn, but offer
+  # --cray-print-opts=...
+  message(STATUS "+++++ HERE!")
+  if (NOT MPI_COMPILER_RETURN EQUAL 0)
+    _MPI_check_compiler(${LANG} "--cray-print-opts=all" MPI_COMPILE_CMDLINE MPI_COMPILER_RETURN)
+    message(STATUS "+++++ COMPILE ++ ${MPI_COMPILER_RETURN}: ${MPI_COMPILE_CMDLINE}")
+
+    if (MPI_COMPILER_RETURN EQUAL 0)
+      _MPI_check_compiler(${LANG} "--cray-print-opts=libs" MPI_LINK_CMDLINE MPI_COMPILER_RETURN)
+      message(STATUS "+++++ LINK ++ ${MPI_LINK_CMDLINE}: ${MPI_COMPILE_CMDLINE}")
+
+      if (NOT MPI_COMPILER_RETURN EQUAL 0)
+        unset(MPI_COMPILE_CMDLINE)
+      else()
+        if(DEFINED ENV{CRAYLIBS_X86_64})
+          set(MPI_LINK_CMDLINE "-L${CRAYLIBS_X86_64}" ${MPI_LINK_CMDLINE})
+        endif()
+        set(MPI_LINK_CMDLINE ${MPI_LINK_CMDLINE} -lmpi)
       endif()
     endif()
   endif()
@@ -1490,6 +1517,7 @@ foreach(LANG IN ITEMS C CXX Fortran)
 
           # If the base directory did not help (for example because the mpiexec isn't in the same directory as the compilers),
           # we shall try searching in the default paths.
+          message(STATUS "++ _MPI_${LANG}_COMPILER_NAMES: ${_MPI_${LANG}_COMPILER_NAMES} ++")
           find_program(MPI_${LANG}_COMPILER
             NAMES  ${_MPI_${LANG}_COMPILER_NAMES}
             PATH_SUFFIXES bin sbin
@@ -1517,6 +1545,33 @@ foreach(LANG IN ITEMS C CXX Fortran)
           elseif(MPI_${LANG}_COMPILER)
             _MPI_interrogate_compiler(${LANG})
           endif()
+        endif()
+
+        # Are we on a Cray and don't use the compiler wrappers directly?
+        if(NOT "${MPI_${LANG}_COMPILER}" AND DEFINED ENV{CRAYLIBS_X86_64})
+          message(STATUS "Cray, Cray!")
+          set(MPI_PINNED_COMPILER TRUE)
+          find_program(MPI_${LANG}_COMPILER
+            NAMES  ${_MPI_Cray_${LANG}_COMPILER_NAMES}
+            PATH_SUFFIXES bin sbin
+            DOC    "MPI compiler for ${LANG}"
+          )
+
+          # If we haven't made the implicit compiler test yet, perform it now.
+          if(NOT MPI_${LANG}_TRIED_IMPLICIT)
+            _MPI_create_imported_target(${LANG})
+            _MPI_check_lang_works(${LANG} TRUE)
+          endif()
+
+          message(STATUS "++ MPI_${LANG}_COMPILER: ${MPI_${LANG}_COMPILER}")
+          # todo: do some kind of compiler_id_detection(MPI_${LANG}_COMPILER outvar ${LANG})
+          # to map "/opt/cray/pe/craype/2.7.6/bin/CC" to "Cray"
+          # message(STATUS "++ MPI_${LANG}_COMPILER_ID: ${MPI_${LANG}_COMPILER_ID}")
+          message(STATUS "++ CMAKE_${LANG}_COMPILER: ${CMAKE_${LANG}_COMPILER}")
+          message(STATUS "++ CMAKE_${LANG}_COMPILER_ID: ${CMAKE_${LANG}_COMPILER_ID}")
+
+          set(MPI_${LANG}_WORKS_IMPLICIT TRUE)
+          _MPI_interrogate_compiler(${LANG})
         endif()
 
         if(NOT MPI_PINNED_COMPILER AND NOT MPI_${LANG}_WRAPPER_FOUND)
