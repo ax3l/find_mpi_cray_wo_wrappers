@@ -495,14 +495,11 @@ function (_MPI_interrogate_compiler LANG)
 
   # Cray compiler wrappers come usually without a separate mpicc/c++/ftn, but offer
   # --cray-print-opts=...
-  message(STATUS "+++++ HERE!")
   if (NOT MPI_COMPILER_RETURN EQUAL 0)
     _MPI_check_compiler(${LANG} "--cray-print-opts=all" MPI_COMPILE_CMDLINE MPI_COMPILER_RETURN)
-    message(STATUS "+++++ COMPILE ++ ${MPI_COMPILER_RETURN}: ${MPI_COMPILE_CMDLINE}")
 
     if (MPI_COMPILER_RETURN EQUAL 0)
       _MPI_check_compiler(${LANG} "--cray-print-opts=libs" MPI_LINK_CMDLINE MPI_COMPILER_RETURN)
-      message(STATUS "+++++ LINK ++ ${MPI_LINK_CMDLINE}: ${MPI_COMPILE_CMDLINE}")
 
       if (NOT MPI_COMPILER_RETURN EQUAL 0)
         unset(MPI_COMPILE_CMDLINE)
@@ -511,6 +508,9 @@ function (_MPI_interrogate_compiler LANG)
           set(MPI_LINK_CMDLINE "-L${CRAYLIBS_X86_64}" ${MPI_LINK_CMDLINE})
         endif()
         set(MPI_LINK_CMDLINE ${MPI_LINK_CMDLINE} -lmpi)
+        # Future: find a generic way to optionally request GPU-aware libraries,
+        #         which add, e.g., $(PE_MPICH_GTL_DIR_gfx908) -lmpi_gtl_hsa
+        #         to the link flags
       endif()
     endif()
   endif()
@@ -1517,7 +1517,6 @@ foreach(LANG IN ITEMS C CXX Fortran)
 
           # If the base directory did not help (for example because the mpiexec isn't in the same directory as the compilers),
           # we shall try searching in the default paths.
-          message(STATUS "++ _MPI_${LANG}_COMPILER_NAMES: ${_MPI_${LANG}_COMPILER_NAMES} ++")
           find_program(MPI_${LANG}_COMPILER
             NAMES  ${_MPI_${LANG}_COMPILER_NAMES}
             PATH_SUFFIXES bin sbin
@@ -1548,8 +1547,10 @@ foreach(LANG IN ITEMS C CXX Fortran)
         endif()
 
         # Are we on a Cray and don't use the compiler wrappers directly?
+        # todo: cleaner would be some kind of compiler ID check, e.g.
+        #   compiler_id_detection(MPI_${LANG}_COMPILER outvar ${LANG})
+        # to map "/opt/cray/pe/craype/2.7.6/bin/CC" to "Cray"
         if(NOT "${MPI_${LANG}_COMPILER}" AND DEFINED ENV{CRAYLIBS_X86_64})
-          message(STATUS "Cray, Cray!")
           set(MPI_PINNED_COMPILER TRUE)
           find_program(MPI_${LANG}_COMPILER
             NAMES  ${_MPI_Cray_${LANG}_COMPILER_NAMES}
@@ -1562,13 +1563,6 @@ foreach(LANG IN ITEMS C CXX Fortran)
             _MPI_create_imported_target(${LANG})
             _MPI_check_lang_works(${LANG} TRUE)
           endif()
-
-          message(STATUS "++ MPI_${LANG}_COMPILER: ${MPI_${LANG}_COMPILER}")
-          # todo: do some kind of compiler_id_detection(MPI_${LANG}_COMPILER outvar ${LANG})
-          # to map "/opt/cray/pe/craype/2.7.6/bin/CC" to "Cray"
-          # message(STATUS "++ MPI_${LANG}_COMPILER_ID: ${MPI_${LANG}_COMPILER_ID}")
-          message(STATUS "++ CMAKE_${LANG}_COMPILER: ${CMAKE_${LANG}_COMPILER}")
-          message(STATUS "++ CMAKE_${LANG}_COMPILER_ID: ${CMAKE_${LANG}_COMPILER_ID}")
 
           set(MPI_${LANG}_WORKS_IMPLICIT TRUE)
           _MPI_interrogate_compiler(${LANG})
