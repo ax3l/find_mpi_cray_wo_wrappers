@@ -496,21 +496,19 @@ function (_MPI_interrogate_compiler LANG)
   # Cray compiler wrappers come usually without a separate mpicc/c++/ftn, but offer
   # --cray-print-opts=...
   if (NOT MPI_COMPILER_RETURN EQUAL 0)
-    _MPI_check_compiler(${LANG} "--cray-print-opts=all" MPI_COMPILE_CMDLINE MPI_COMPILER_RETURN)
+    _MPI_check_compiler(${LANG} "--cray-print-opts=cflags"
+                        MPI_COMPILE_CMDLINE MPI_COMPILER_RETURN)
 
     if (MPI_COMPILER_RETURN EQUAL 0)
-      _MPI_check_compiler(${LANG} "--cray-print-opts=libs" MPI_LINK_CMDLINE MPI_COMPILER_RETURN)
+      # Pass --no-as-needed so the mpi library is always linked. Otherwise, the
+      # Cray compiler wrapper puts an --as-needed flag around the mpi library,
+      # and it is not linked unless code directly refers to it.
+      _MPI_check_compiler(${LANG} "--no-as-needed;--cray-print-opts=libs"
+                          MPI_LINK_CMDLINE MPI_COMPILER_RETURN)
 
       if (NOT MPI_COMPILER_RETURN EQUAL 0)
         unset(MPI_COMPILE_CMDLINE)
-      else()
-        if(DEFINED ENV{CRAYLIBS_X86_64})
-          set(MPI_LINK_CMDLINE "-L${CRAYLIBS_X86_64}" ${MPI_LINK_CMDLINE})
-        endif()
-        set(MPI_LINK_CMDLINE ${MPI_LINK_CMDLINE} -lmpi)
-        # Future: find a generic way to optionally request GPU-aware libraries,
-        #         which add, e.g., $(PE_MPICH_GTL_DIR_gfx908) -lmpi_gtl_hsa
-        #         to the link flags
+        unset(MPI_LINK_CMDLINE)
       endif()
     endif()
   endif()
@@ -1467,9 +1465,10 @@ foreach(LANG IN ITEMS C CXX Fortran)
   endif()
   if(_MPI_FIND_${LANG})
     if( ${LANG} STREQUAL CXX AND NOT MPICXX IN_LIST MPI_FIND_COMPONENTS )
-      set(MPI_CXX_SKIP_MPICXX FALSE CACHE BOOL "If true, the MPI-2 C++ bindings are disabled using definitions.")
+      option(MPI_CXX_SKIP_MPICXX "If true, the MPI-2 C++ bindings are disabled using definitions." FALSE)
       mark_as_advanced(MPI_CXX_SKIP_MPICXX)
     endif()
+    _MPI_adjust_compile_definitions(${LANG})
     if(NOT (MPI_${LANG}_LIB_NAMES AND (MPI_${LANG}_INCLUDE_PATH OR MPI_${LANG}_INCLUDE_DIRS OR MPI_${LANG}_COMPILER_INCLUDE_DIRS)))
       set(MPI_${LANG}_TRIED_IMPLICIT FALSE)
       set(MPI_${LANG}_WORKS_IMPLICIT FALSE)
@@ -1546,11 +1545,12 @@ foreach(LANG IN ITEMS C CXX Fortran)
           endif()
         endif()
 
-        # Are we on a Cray and don't use the compiler wrappers directly?
-        # todo: cleaner would be some kind of compiler ID check, e.g.
-        #   compiler_id_detection(MPI_${LANG}_COMPILER outvar ${LANG})
-        # to map "/opt/cray/pe/craype/2.7.6/bin/CC" to "Cray"
-        if(NOT "${MPI_${LANG}_COMPILER}" AND DEFINED ENV{CRAYLIBS_X86_64})
+        # We are on a Cray, environment identfier: PE_ENV is set (CRAY), and
+        # have NOT found an mpic++-like compiler wrapper (previous block),
+        # and we do NOT use the Cray cc/CC compiler wrappers as CC/CXX CMake
+        # compiler.
+        # So as a last resort, we now interrogate cc/CC/ftn for MPI flags.
+        if(DEFINED ENV{PE_ENV} AND NOT "${MPI_${LANG}_COMPILER}")
           set(MPI_PINNED_COMPILER TRUE)
           find_program(MPI_${LANG}_COMPILER
             NAMES  ${_MPI_Cray_${LANG}_COMPILER_NAMES}
@@ -1596,7 +1596,6 @@ foreach(LANG IN ITEMS C CXX Fortran)
     endif()
     _MPI_assemble_libraries(${LANG})
 
-    _MPI_adjust_compile_definitions(${LANG})
     # We always create imported targets even if they're empty
     _MPI_create_imported_target(${LANG})
 
